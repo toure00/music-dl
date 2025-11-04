@@ -10,12 +10,18 @@
    [cheshire.core :as json]))
 
 (def host "https://wyapi.toubiec.cn/api/music")
-(def netease-api "https://music.163.com/api/search/get/web?csrf_token=hlpretag=&hlposttag=&offset=0&total=true&limit=20&type=%d&s=%s")
-;; standard：标准音质, exhigh：极高音质, lossless：无损音质
-;; hires：Hi-Res音质, jyeffect：高清环绕声, sky：沉浸环绕声,
+(def netease-api "https://music.163.com/api")
+(def netease-search-api (str netease-api "/search/get/web?csrf_token=hlpretag=&hlposttag=&offset=0&total=true&limit=20&type=%d&s=%s"))
+(def netease-lyric-api (str netease-api "/song/lyric?os=pc&lv=-1&id="))
+(def args (cli/parse-opts *command-line-args* {:verbose false}))
+
+;; standard：标准音质, exhigh：极高音质,
+;; lossless：无损音质 hires：Hi-Res音质,
+;; jyeffect：高清环绕声, sky：沉浸环绕声,
 ;; jymaster：超清母带
 (def level (atom ""))
 (def playlist (atom "./"))
+
 (def usage-doc
   (str"Usage:\n"
       "  -pid,\tPlay list ID\n"
@@ -23,9 +29,9 @@
       "  -qs,\tQuery song name\n"
       "  -ql,\tQuery song list\n\n"
       "Optional:\n"
+      "  --dl,\tDownload lyric (default disable)\n"
       "  -l,\tQuality level (default exhigh)\n"
       "  \t(level: standard,exhigh,lossless,hires,jyeffect,sky,jymaster)"))
-
 
 (def headers
   {"Content-Type" "application/json"
@@ -75,6 +81,20 @@
       first
       :url))
 
+(defn- download-lyric [id]
+  (let [data (:data (link-request (str host "/lyric") {:id (str id)}))]
+    (if (= (:tlyric data) "")
+      (:lrc data)
+      (->> data
+           ((fn [x] (str (:lrc x) (:tlyric x))))
+           (#(str/replace % "[" ""))
+           (str/split-lines)
+           (map #(str/split % #"]"))
+           (reduce (fn [acc [k v]] (update acc (keyword (str k)) (fnil conj []) v)) (sorted-map))
+           (map #(str "[" (name (first %)) "]" (str/join " / " (remove nil? (second %)))))
+           (str/join "\n")
+           ))))
+
 (defn- download-music [sobj]
   ;; (print sobj)
   (let [dlink (get-music-dlink (:id sobj))
@@ -82,7 +102,10 @@
         title (:name sobj)
         album (:album sobj)
         singer (if (contains? sobj :artists) (:artists sobj) (:singer sobj))
-        f-path (str @playlist (str/replace title "/" " ") " - " (str/replace singer "/" "&") (check-link dlink))
+        lyric (if (contains? args :dl)  (download-lyric (:id sobj)) "")
+        path (str @playlist (str/replace title "/" " ") " - " (str/replace singer "/" "&"))
+        f-path (str path (check-link dlink))
+        l-path (str path ".lrc")
         f-args ["-i" dlink
                 "-i" picurl
                 "-c" "copy"
@@ -92,16 +115,23 @@
                 "-metadata" (str "title=" title)
                 "-metadata" (str "album=" album)
                 "-metadata" (str "artist=" singer)
-                "-metadata" (str "Comment=http://music.163.com/song?id=" (:id sobj))
+                "-metadata" (str "Source=http://music.163.com/song?id=" (:id sobj))
                 f-path
                 ]]
+    ;; 下载歌曲
     (if (not (.exists (io/file f-path)))
       (do
         (println (str "Downloading -> " f-path))
         (apply p/sh "ffmpeg" f-args))
       (do
         (println (str "Exists..." title " - " singer))
-        (Thread/sleep 1000)))))
+        (Thread/sleep 1000)))
+    ;; 下载歌词
+    (if (not= "" lyric)
+      (do
+      (println (str "Downloading -> " l-path))
+      (spit l-path lyric)))
+    ))
 
 (defn- get-music-list [pid]
   (println "Get playlist...")
@@ -134,14 +164,13 @@
   (let [type (:type qarg)
         fun (:fun qarg)]
     (->>
-     (link-request (format netease-api type name))
+     (link-request (format netease-search-api type name))
      :result
      fun
      (map-indexed vector))))
 
 (defn- main []
-  (let [args (cli/parse-opts *command-line-args* {:verbose false})
-        flag (count (set/intersection (set (keys args)) #{:pid :sid :qs :ql}))]
+  (let [flag (count (set/intersection (set (keys args)) #{:pid :sid :qs :ql}))]
     (reset! level (get args :l "exhigh"))
     (if (not= 1 flag)
       (println usage-doc)
@@ -161,4 +190,3 @@
                                   (map download-music)
                                   doall)))))
 (main)
-
