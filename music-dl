@@ -1,0 +1,164 @@
+#!/usr/bin/env bb
+(ns music.dl
+  (:require
+   [babashka.http-client :as http]
+   [babashka.cli :as cli]
+   [babashka.process :as p]
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [clojure.set :as set]
+   [cheshire.core :as json]))
+
+(def host "https://wyapi.toubiec.cn/api/music")
+(def netease-api "https://music.163.com/api/search/get/web?csrf_token=hlpretag=&hlposttag=&offset=0&total=true&limit=20&type=%d&s=%s")
+;; standard：标准音质, exhigh：极高音质, lossless：无损音质
+;; hires：Hi-Res音质, jyeffect：高清环绕声, sky：沉浸环绕声,
+;; jymaster：超清母带
+(def level (atom ""))
+(def playlist (atom "./"))
+(def usage-doc
+  (str"Usage:\n"
+      "  -pid,\tPlay list ID\n"
+      "  -sid,\tSong ID\n"
+      "  -qs,\tQuery song name\n"
+      "  -ql,\tQuery song list\n\n"
+      "Optional:\n"
+      "  -l,\tQuality level (default exhigh)\n"
+      "  \t(level: standard,exhigh,lossless,hires,jyeffect,sky,jymaster)"))
+
+
+(def headers
+  {"Content-Type" "application/json"
+   "Accept" "application/json"
+   "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+   "Sec-Fetch-Mode" "cors"
+   })
+     
+(def qargs
+  {
+   :qs {:type 1
+        :fun (fn [x]
+               (->> x
+                    :songs
+                    (map #(hash-map :id (:id %) :desc (str (:name %) " - " (:name (first (:artists %))))))))}
+   :ql {:type 1000
+        :fun (fn [x]
+               (->> x
+                    :playlists
+                    (map #(hash-map :id (:id %) :desc (format "%s - (共 %d 首) - (播放量:%d) - (收藏量:%d)" (:name %) (:trackCount %) (:playCount %) (:bookCount %))))
+                    ))}
+   })
+
+(defn- link-request 
+  ([url]
+   (-> (http/get url {:headers headers})
+       :body
+       (json/parse-string true)))
+  ([url args]
+   ;; (println url)
+   ;; (println args)
+   (-> (http/post url {:headers headers
+                       :body (json/generate-string args)})
+       :body
+       (json/parse-string true))))
+
+(defn- check-link [link]
+  ;; (print link)
+  (cond
+    (nil? link) " -- 已失效"
+    (str/includes? link ".mp3") ".mp3"
+    (str/includes? link ".flac") ".flac"))
+
+(defn- get-music-dlink [sid]
+  (-> (link-request (str host "/url") {:id (str sid) :level @level})
+      :data
+      first
+      :url))
+
+(defn- download-music [sobj]
+  ;; (print sobj)
+  (let [dlink (get-music-dlink (:id sobj))
+        picurl (if (contains? sobj :picUrl) (:picUrl sobj) (:picimg sobj))
+        title (:name sobj)
+        album (:album sobj)
+        singer (if (contains? sobj :artists) (:artists sobj) (:singer sobj))
+        f-path (str @playlist (str/replace title "/" " ") " - " (str/replace singer "/" "&") (check-link dlink))
+        f-args ["-i" dlink
+                "-i" picurl
+                "-c" "copy"
+                "-map" "0"
+                "-map" "1"
+                "-disposition:v:0" "attached_pic"
+                "-metadata" (str "title=" title)
+                "-metadata" (str "album=" album)
+                "-metadata" (str "artist=" singer)
+                "-metadata" (str "Comment=http://music.163.com/song?id=" (:id sobj))
+                f-path
+                ]]
+    (if (not (.exists (io/file f-path)))
+      (do
+        (println (str "Downloading -> " f-path))
+        (apply p/sh "ffmpeg" f-args))
+      (do
+        (println (str "Exists..." title " - " singer))
+        (Thread/sleep 1000)))))
+
+(defn- get-music-list [pid]
+  (println "Get playlist...")
+  (let  [data (:data (link-request (str host "/playlist") {:id (str pid)}))]
+    ;; 创建歌单目录
+    (println "Create playlist dir...")
+    (when (not (.exists (io/file (:name data))))
+      (.mkdir (io/file (:name data))))
+    ;; 设置歌单名变量
+    (println "Set playlist dir var...")
+    (reset! playlist (str "./" (:name data) "/"))
+    (->> data
+         :tracks)))
+
+(defn- get-music-info [sid]
+  (-> (link-request (str host "/detail") {:id (str sid)})
+      :data))
+
+(defn- select-music [qlist]
+  (doseq [ql qlist]
+    (println (str (first ql) ". " (:desc (last ql)))))
+  (println "input number:")
+  (let [choice (Integer/parseInt (read-line))
+        selected (last (nth qlist choice))]
+    (println "selected:" (:desc selected))
+    (println "id:" (:id selected))
+    (:id selected)))
+
+(defn- query-music [qarg name]
+  (let [type (:type qarg)
+        fun (:fun qarg)]
+    (->>
+     (link-request (format netease-api type name))
+     :result
+     fun
+     (map-indexed vector))))
+
+(defn- main []
+  (let [args (cli/parse-opts *command-line-args* {:verbose false})
+        flag (count (set/intersection (set (keys args)) #{:pid :sid :qs :ql}))]
+    (reset! level (get args :l "exhigh"))
+    (if (not= 1 flag)
+      (println usage-doc)
+      (cond
+        (contains? args :pid) (->> (get-music-list (:pid args))
+                                   (map download-music)
+                                   doall)
+        (contains? args :sid) (->> (get-music-info (:sid args))
+                                   download-music)
+        (contains? args :qs) (->> (query-music (:qs qargs) (:qs args))
+                                  select-music
+                                  get-music-info
+                                  download-music)
+        (contains? args :ql) (->> (query-music (:ql qargs) (:ql args))
+                                  select-music
+                                  get-music-list
+                                  (map download-music)
+                                  doall)))))
+(main)
+

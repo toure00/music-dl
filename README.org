@@ -1,0 +1,25 @@
+* 音乐下载器
+用于某云音乐下载，测试环境 Linux，其他操作系统未测试。
+
+** 依赖
+- [[https://github.com/babashka/babashka][babashka]]
+- [[https://ffmpeg.org/][FFmpeg]]
+
+** 使用方式
+安装所需工具后运行
+#+begin_src shell
+$ bb music-dl
+
+Usage:
+  -pid, Play list ID
+  -sid, Song ID
+  -qs,  Query song name
+  -ql,  Query song list
+
+Optional:
+  -l,   Quality level (default exhigh)
+        (level: standard,exhigh,lossless,hires,jyeffect,sky,jymaster)
+#+end_src
+
+** 演示
+https://github.com/user-attachments/assets/0b54901c-c64f-406d-813a-a928be93b902
