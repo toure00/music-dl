@@ -5,6 +5,9 @@
 - [[https://github.com/babashka/babashka][babashka]]
 - [[https://ffmpeg.org/][FFmpeg]]
 
+** 上游 api
+[[https://github.com/Suxiaoqinx/Netease_url][Netease_url]]
+
 ** 使用方式
 安装所需工具后运行
 #+begin_src shell
