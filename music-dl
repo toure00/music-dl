@@ -1,5 +1,7 @@
 #!/usr/bin/env bb
 (ns music.dl
+  (:import
+   [java.net URI URLEncoder])
   (:require
    [babashka.http-client :as http]
    [babashka.cli :as cli]
@@ -7,25 +9,23 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.set :as set]
-   [cheshire.core :as json]))
+   [cheshire.core :as json]
+   [clojure.pprint :refer [print-table]]))
 
 (def host "https://wyapi-2.toubiec.cn/api")
 (def m-plist (str host "/getPlaylistDetail"))
 (def m-info (str host "/getSongDetail"))
 (def m-lyric (str host "/getLyric"))
-(def m-url (str host "/getMusicUrl"))
+(def durl-vers
+  {:v1 {:url "https://wyapi.toubiec.cn/api/music/url" :fn (fn [x] (:url (first x)))}
+   :v2 {:url (str host "/getMusicUrl") :fn (fn [x] (:url ((keyword (first (keys x)))x)))}})
+(def curr-durl (:v2 durl-vers))
 
 (def netease-api "https://music.163.com/api")
+(def netease-song-api (str netease-api "/song/detail/?id=%d&ids=[%d]"))
 (def netease-search-api (str netease-api "/search/get/web?csrf_token=hlpretag=&hlposttag=&offset=0&total=true&limit=20&type=%d&s=%s"))
 (def netease-lyric-api (str netease-api "/song/lyric?os=pc&lv=-1&id="))
-(def args (cli/parse-opts *command-line-args* {:verbose false}))
-
-;; standard：标准音质, exhigh：极高音质,
-;; lossless：无损音质 hires：Hi-Res音质,
-;; jyeffect：高清环绕声, sky：沉浸环绕声,
-;; jymaster：超清母带
-(def level (atom ""))
-(def playlist (atom "./"))
+(def args! (atom (cli/parse-opts *command-line-args* {:verbose false}) ))
 
 (def usage-doc
   (str"Usage:\n"
@@ -34,9 +34,14 @@
       "  -qs,\tQuery song name\n"
       "  -ql,\tQuery song list\n\n"
       "Optional:\n"
-      "  --dl,\tDownload lyric (default disable)\n"
+      "  -dl,\tDownload lyric (default hard)\n"
+      "  \t(lyric: hard(内嵌), ext(外挂))\n"
       "  -l,\tQuality level (default exhigh)\n"
       "  \t(level: standard,exhigh,lossless,hires,jyeffect,sky,jymaster)"))
+;; standard：标准音质, exhigh：极高音质,
+;; lossless：无损音质 hires：Hi-Res音质,
+;; jyeffect：高清环绕声, sky：沉浸环绕声,
+;; jymaster：超清母带
 
 (def headers
   {"Content-Type" "application/json"
@@ -45,24 +50,24 @@
    "Sec-Fetch-Mode" "cors"
    })
 
-(defn- link-request
+(defn- request-url
   ([url]
    (-> (http/get url {:headers headers})
        :body
        (json/parse-string true)))
-  ([url args]
-   (-> (http/post url {:headers headers :body (json/generate-string args)})
+  ([url arg]
+   (-> (http/post url {:headers headers :body (json/generate-string arg)})
        :body
        (json/parse-string true))))
      
 (def qargs
   {:qs {:type 1
-        :fun (fn [x]
+        :fn (fn [x]
                (->> x
                     :songs
                     (map #(hash-map :id (:id %) :desc (str (:name %) " - " (:name (first (:artists %))))))))}
    :ql {:type 1000
-        :fun (fn [x]
+        :fn (fn [x]
                (->> x
                     :playlists
                     (map #(hash-map :id (:id %) :desc
@@ -81,12 +86,11 @@
 
 (defn- query-music [qarg name]
   (let [type (:type qarg)
-        fun (:fun qarg)]
-    (->>
-     (link-request (format netease-search-api type name))
-     :result
-     fun
-     (map-indexed vector))))
+        fn (:fn qarg)]
+    (->> (request-url (format netease-search-api type (URLEncoder/encode name)))
+         :result
+         fn
+         (map-indexed vector))))
 
 (defn- check-link [link]
   (cond
@@ -95,40 +99,71 @@
     (str/includes? link ".flac") ".flac"))
 
 (defn- get-music-dlink [sid]
-  (-> (link-request m-url {:id (str sid) :level @level})
+  (-> (request-url (:url curr-durl) {:id (str sid) :level (:l @args!)})
       :data
-      ((keyword (str sid)))
-      :url))
+      ((:fn curr-durl))))
 
 (defn- handle-song-info [s-info]
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
-        singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))]
+        singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
+        nm-info (first (:songs (request-url (format netease-song-api (:id s-info) (:id s-info)))))
+        nm-album (:album nm-info)]
     {:id (:id s-info)
      :picurl picurl
-     :title (:name s-info)
+     :name (:name s-info)
      :album (:album s-info)
      :singer singer
-     :path (str @playlist (str/replace (:name s-info) "/" " ") " - " (str/replace singer "/" "&"))
-     }))
+     :song-no (:no nm-info)
+     :song-alias (if (empty? (:alias nm-info)) nil (str/join "," (:alias nm-info)))
+     :song-trans (:transName nm-info)
+     :album-id (:id nm-album)
+     :album-artists (str/join "," (map #(:name %) (:artists nm-album)))
+     :album-trans (:transName nm-album)
+     :album-type (:type nm-album)
+     :album-sub-type (:subType nm-album)
+     :album-size (:size nm-album)
+     :album-publish-time (.format (java.text.SimpleDateFormat. "yyyy-MM-dd") (java.util.Date. (:publishTime nm-album)))
+     :album-company (:company nm-album)
+     :path (str (:path @args!) (str/replace (:name s-info) "/" " ") " - " (str/replace singer "/" "&"))}))
 
 (defn- get-music-list [pid]
   (println "Get playlist...")
-  (let  [data (:data (link-request m-plist {:id (str pid)}))]
+  (let  [data (:data (request-url m-plist {:id (str pid)}))]
     ;; 创建歌单目录
     (println "Create playlist dir...")
     (when (not (.exists (io/file (:name data))))
       (.mkdir (io/file (:name data))))
     ;; 设置歌单名变量
     (println "Set playlist dir var...")
-    (reset! playlist (str "./" (:name data) "/"))
+    (swap! args! assoc :path (str "./" (:name data) "/"))
+    (println @args!)
     (->> data
          :tracks
          (map handle-song-info))))
 
 (defn- get-music-info [sid]
-  (-> (link-request m-info {:id (str sid)})
+  (-> (request-url m-info {:id (str sid)})
       :data
       handle-song-info))
+
+(defn- get-lyric [sid]
+  (let [data (:data (request-url m-lyric {:id (str sid)}))]
+    (if (= (:tlyric data) "")
+      (:lrc data)
+      (->> data
+           ((fn [x] (str (:lrc x) (:tlyric x))))
+           (#(str/replace % "[" ""))
+           (str/split-lines)
+           (map #(str/split % #"]"))
+           (reduce (fn [acc [k v]] (update acc (keyword (str k)) (fnil conj []) v)) (sorted-map))
+           (map flatten)
+           ;; 换行
+           ;; (map #(str "[" (name (first %) ) "]" (str/join " / " (remove nil? (rest %)))))
+           ;; 同一行
+           (map #(str "[" (name (first %)) "]" (second %)
+                      (when (= 3 (count (remove nil? %)))
+                        (str "\n" "[" (name (first %)) "]" (last %)))))
+           (str/join "\n")))))
 
 (defn- file-exists? [path]
   (if (not (.exists (io/file path)))
@@ -138,63 +173,75 @@
         (Thread/sleep 1000)
         true)))
 
-(defn- download-lyric [sobj]
-  (let [path (str (:path sobj) ".lrc")]
-    (when (not (file-exists? path))
-      (let [data (:data (link-request m-lyric {:id (str (:id sobj))}))
-            lyric (if (= (:tlyric data) "")
-                    (:lrc data)
-                    (->> data
-                         ((fn [x] (str (:lrc x) (:tlyric x))))
-                         (#(str/replace % "[" ""))
-                         (str/split-lines)
-                         (map #(str/split % #"]"))
-                         (reduce (fn [acc [k v]] (update acc (keyword (str k)) (fnil conj []) v)) (sorted-map))
-                         (map #(str "[" (name (first %)) "]" (str/join " / " (remove nil? (second %)))))
-                         (str/join "\n")))]
-        (spit path lyric)))))
-
 (defn- download-music [sobj]
   ;; (print sobj)
   (let [dlink (get-music-dlink (:id sobj))
-        f-path (str (:path sobj) (check-link dlink))
+        suffix (check-link dlink)
+        f-path (str (:path sobj) suffix)
+        l-path (str (:path sobj) ".lrc")
+        lyric (get-lyric (:id sobj))
         f-args ["-i" dlink
                 "-i" (:picurl sobj)
                 "-c" "copy"
                 "-map" "0"
                 "-map" "1"
                 "-disposition:v:0" "attached_pic"
-                "-metadata" (str "title=" (:title sobj))
-                "-metadata" (str "album=" (:album sobj))
+                "-metadata" "encoded_by=ffmpeg"
+                "-metadata" (str "lyrics=" lyric)
+                "-metadata" (str "title=" (:name sobj))
                 "-metadata" (str "artist=" (:singer sobj))
-                "-metadata" (str "Source=http://music.163.com/song?id=" (:id sobj))
+                "-metadata" (str "album=" (:album sobj))
+                "-metadata" (str "album_artist=" (:album-artists sobj))
+                "-metadata" (str "date=" (:album-publish-time sobj))
+                "-metadata" (str "publisher=" (:album-company sobj))
+                "-metadata" (str "copyright=" (:album-company sobj))
+                "-metadata" (str "RELEASETYPE=" (:album-type sobj))
+                "-metadata" (str "album_sub_type=" (:album-sub-type sobj))
+                "-metadata" (str "source_song=https://music.163.com/song?id=" (:id sobj))
+                "-metadata" (str "source_album=https://music.163.com/album?id=" (:album-id sobj))
+                (when (not (nil? (:song-alias sobj))) ["-metadata" (str "alias=" (:song-alias sobj))])
+                (when (not (nil? (:song-trans sobj))) ["-metadata" (str "trans_song=" (:song-trans sobj))])
+                (when (not (nil? (:album-trans sobj))) ["-metadata" (str "trans_album=" (:album-trans sobj))])
+                (if (= ".mp3" suffix)
+                  ["-metadata" (str "lyrics=" lyric)
+                   "-metadata" (str "track=" (:song-no sobj) "/" (:album-size sobj))]
+                  ["-metadata" (str "lyrics=" lyric)
+                   "-metadata" (str "tracknumber=" (:song-no sobj))
+                   "-metadata" (str "tracktotal="  (:album-size sobj))])
                 f-path]]
+    ;; downlaod music
     (when (not (file-exists? f-path))
-      (apply p/sh "ffmpeg" f-args))))
+      (let [arg (remove nil? (flatten f-args))]
+           ;; (doall (map println arg))
+           (apply p/sh "ffmpeg" arg)))
+    ;; downlaod lyrics
+    (when (and (= (:dl @args!) "ext")
+           (not (file-exists?  l-path)))
+      (spit l-path lyric))))
 
 (defn- main []
-  (let [flag (count (set/intersection (set (keys args)) #{:pid :sid :qs :ql}))
-        exec (if (contains? args :dl)
-               (fn [x] (download-music x) (download-lyric x))
-               (fn [x] (download-music x)))]
-    (reset! level (get args :l "exhigh"))
+  (let [flag (count (set/intersection (set (keys @args!)) #{:pid :sid :qs :ql}))]
+    (swap! args! assoc :path "./")
+    (when (not (contains? @args! :l)) (swap! args! assoc :l "exhigh"))
+    (when (not (contains? @args! :dl)) (swap! args! assoc :dl "hard"))
+    (println @args!)
     (if (not= 1 flag)
       (println usage-doc)
       (do (println "Start...")
           (cond
-            (contains? args :pid) (->> (get-music-list (:pid args))
-                                       (map exec)
+            (contains? @args! :pid) (->> (get-music-list (:pid @args!))
+                                       (map download-music)
                                        doall)
-            (contains? args :sid) (->> (get-music-info (:sid args))
-                                       exec)
-            (contains? args :qs) (->> (query-music (:qs qargs) (:qs args))
+            (contains? @args! :sid) (->> (get-music-info (:sid @args!))
+                                       download-music)
+            (contains? @args! :qs) (->> (query-music (:qs qargs) (:qs @args!))
                                       select-music
                                       get-music-info
-                                      exec)
-            (contains? args :ql) (->> (query-music (:ql qargs) (:ql args))
+                                      download-music)
+            (contains? @args! :ql) (->> (query-music (:ql qargs) (:ql @args!))
                                       select-music
                                       get-music-list
-                                      (map exec)
+                                      (map download-music)
                                       doall))
           (println "Finish!")))))
 
