@@ -17,9 +17,9 @@
 (def m-info (str host "/getSongDetail"))
 (def m-lyric (str host "/getLyric"))
 (def durl-vers
-  {:v1 {:url "https://wyapi.toubiec.cn/api/music/url" :fn (fn [x] (:url (first x)))}
-   :v2 {:url (str host "/getMusicUrl") :fn (fn [x] (:url ((keyword (first (keys x)))x)))}})
-(def curr-durl (:v2 durl-vers))
+  {:v1 {:mode "v1" :url "https://wyapi.toubiec.cn/api/music/url" :fn (fn [x] (:url (first x)))}
+   :v2 {:mode "v2" :url (str host "/getMusicUrl") :fn (fn [x] (:url ((keyword (first (keys x)))x)))}})
+(def curr-durl! (atom (:v2 durl-vers) ))
 
 (def netease-api "https://music.163.com/api")
 (def netease-song-api (str netease-api "/song/detail/?id=%d&ids=[%d]"))
@@ -98,10 +98,19 @@
     (str/includes? link ".mp3") ".mp3"
     (str/includes? link ".flac") ".flac"))
 
+(declare switch-dlink-ver get-music-dlink)
+(defn- switch-dlink-ver [sid]
+  (println "switch get dlink api version")
+  (if (= "v2" (:mode @curr-durl!))
+    (do (reset! curr-durl! (:v1 durl-vers))
+        (get-music-dlink sid))
+    "api error..."))
+
 (defn- get-music-dlink [sid]
-  (-> (request-url (:url curr-durl) {:id (str sid) :level (:l @args!)})
+  (-> (request-url (:url @curr-durl!) {:id (str sid) :level (:l @args!)})
       :data
-      ((:fn curr-durl))))
+      ((:fn @curr-durl!))
+      (#(if (nil? %) (switch-dlink-ver sid) %))))
 
 (defn- handle-song-info [s-info]
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
@@ -220,29 +229,29 @@
       (spit l-path lyric))))
 
 (defn- main []
-  (let [flag (count (set/intersection (set (keys @args!)) #{:pid :sid :qs :ql}))]
+  (let [flag (set/intersection (set (keys @args!)) #{:pid :sid :qs :ql})
+        exec {:pid #(->> (get-music-list (:pid @args!))
+                         (map download-music)
+                         doall)
+              :sid #(->> (get-music-info (:sid @args!))
+                         download-music)
+              :qs #(->> (query-music (:qs qargs) (:qs @args!))
+                        select-music
+                        get-music-info
+                        download-music)
+              :ql #(->> (query-music (:ql qargs) (:ql @args!))
+                        select-music
+                        get-music-list
+                        (map download-music)
+                        doall)}]
     (swap! args! assoc :path "./")
     (when (not (contains? @args! :l)) (swap! args! assoc :l "exhigh"))
     (when (not (contains? @args! :dl)) (swap! args! assoc :dl "hard"))
     (println @args!)
-    (if (not= 1 flag)
+    (if (not= 1 (count flag))
       (println usage-doc)
       (do (println "Start...")
-          (cond
-            (contains? @args! :pid) (->> (get-music-list (:pid @args!))
-                                       (map download-music)
-                                       doall)
-            (contains? @args! :sid) (->> (get-music-info (:sid @args!))
-                                       download-music)
-            (contains? @args! :qs) (->> (query-music (:qs qargs) (:qs @args!))
-                                      select-music
-                                      get-music-info
-                                      download-music)
-            (contains? @args! :ql) (->> (query-music (:ql qargs) (:ql @args!))
-                                      select-music
-                                      get-music-list
-                                      (map download-music)
-                                      doall))
+          (((first flag) exec))
           (println "Finish!")))))
 
 (main)
