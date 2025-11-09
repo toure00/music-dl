@@ -52,13 +52,12 @@
 
 (defn- request-url
   ([url]
-   (-> (http/get url {:headers headers})
-       :body
-       (json/parse-string true)))
+   (request-url url nil))
   ([url arg]
-   (-> (http/post url {:headers headers :body (json/generate-string arg)})
-       :body
-       (json/parse-string true))))
+   (let [resp (if arg
+               (http/post url {:headers headers :body (json/generate-string arg)})
+               (http/get url {:headers headers}))]
+     {:status (:status resp) :body (json/parse-string (:body resp) true)})))
      
 (def qargs
   {:qs {:type 1
@@ -88,6 +87,7 @@
   (let [type (:type qarg)
         fn (:fn qarg)]
     (->> (request-url (format netease-search-api type (URLEncoder/encode name)))
+         :body
          :result
          fn
          (map-indexed vector))))
@@ -98,24 +98,27 @@
     (str/includes? link ".mp3") ".mp3"
     (str/includes? link ".flac") ".flac"))
 
-(declare switch-dlink-ver get-music-dlink)
-(defn- switch-dlink-ver [sid]
-  (println "switch get dlink api version")
+(declare switch-durl-ver get-music-durl)
+(defn- switch-durl-ver [sid]
+  (println "switch get durl api version")
   (if (= "v2" (:mode @curr-durl!))
     (do (reset! curr-durl! (:v1 durl-vers))
-        (get-music-dlink sid))
+        (get-music-durl sid))
     "api error..."))
 
-(defn- get-music-dlink [sid]
-  (-> (request-url (:url @curr-durl!) {:id (str sid) :level (:l @args!)})
-      :data
-      ((:fn @curr-durl!))
-      (#(if (nil? %) (switch-dlink-ver sid) %))))
+(defn- get-music-durl [sid]
+  (let [resp (request-url (:url @curr-durl!) {:id (str sid) :level (:l @args!)})
+        status (:status resp)
+        body (:body resp)
+        durl ((:fn @curr-durl!) (:data body))]
+    (if (or (not= 200 status) (nil? durl))
+      (switch-durl-ver sid)
+      durl)))
 
 (defn- handle-song-info [s-info]
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
         singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
-        nm-info (first (:songs (request-url (format netease-song-api (:id s-info) (:id s-info)))))
+        nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
         nm-album (:album nm-info)]
     {:id (:id s-info)
      :picurl picurl
@@ -137,7 +140,7 @@
 
 (defn- get-music-list [pid]
   (println "Get playlist...")
-  (let  [data (:data (request-url m-plist {:id (str pid)}))]
+  (let  [data (:data (:body (request-url m-plist {:id (str pid)})))]
     ;; 创建歌单目录
     (println "Create playlist dir...")
     (when (not (.exists (io/file (:name data))))
@@ -151,12 +154,14 @@
          (map handle-song-info))))
 
 (defn- get-music-info [sid]
-  (-> (request-url m-info {:id (str sid)})
+  (->> (request-url m-info {:id (str sid)})
+      :body
       :data
-      handle-song-info))
+      (#(handle-song-info %))
+      ))
 
 (defn- get-lyric [sid]
-  (let [data (:data (request-url m-lyric {:id (str sid)}))]
+  (let [data (:data (:body (request-url m-lyric {:id (str sid)})))]
     (if (= (:tlyric data) "")
       (:lrc data)
       (->> data
@@ -184,12 +189,12 @@
 
 (defn- download-music [sobj]
   ;; (print sobj)
-  (let [dlink (get-music-dlink (:id sobj))
-        suffix (check-link dlink)
+  (let [durl (get-music-durl (:id sobj))
+        suffix (check-link durl)
         f-path (str (:path sobj) suffix)
         l-path (str (:path sobj) ".lrc")
         lyric (get-lyric (:id sobj))
-        f-args ["-i" dlink
+        f-args ["-i" durl
                 "-i" (:picurl sobj)
                 "-c" "copy"
                 "-map" "0"
