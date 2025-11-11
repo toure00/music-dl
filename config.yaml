@@ -1,0 +1,14 @@
+api:
+  host: "https://wyapi.toubiec.cn/api/music"
+  s-info: "/detail"
+  s-list: "/playlist"
+  s-lyric: "/lyric"
+  s-durl: "/url"
+
+opt:
+  # standard: 标准音质, exhigh: 极高音质, lossless: 无损音质 hires: Hi-Res音质,
+  # jyeffect: 高清环绕声, sky: 沉浸环绕声, jymaster: 超清母带
+  level: "lossless"
+
+  # hard(内嵌), ext(外挂)
+  lyric: "hard"

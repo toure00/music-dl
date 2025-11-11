@@ -5,22 +5,26 @@
   (:require
    [babashka.http-client :as http]
    [babashka.cli :as cli]
+   [babashka.fs :as fs]
    [babashka.process :as p]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.set :as set]
    [cheshire.core :as json]
-   [clojure.pprint :refer [print-table]]))
+   [clj-yaml.core :as yaml]
+   ))
 
-(def host "https://wyapi.toubiec.cn/api/music")
-(def m-info (str host "/detail"))
-(def m-plist (str host "/playlist"))
-(def m-lyric (str host "/lyric"))
-(def m-url (str host "/url"))
-;; (def durl-vers
-;;   {:v1 {:mode "v1" :url "https://wyapi.toubiec.cn/api/music/url" :fn (fn [x] (:url (first x)))}
-;;    :v2 {:mode "v2" :url (str host "/getMusicUrl") :fn (fn [x] (:url ((keyword (first (keys x)))x)))}})
-;; (def curr-durl! (atom (:v2 durl-vers) ))
+(def conf-path (str (.getParent (fs/real-path *file*)) "/config.yaml"))
+
+(def conf-data (yaml/parse-string (slurp conf-path)))
+(def api-data (:api conf-data))
+(def opt-data (:opt conf-data))
+
+(def host (:host api-data))
+(def m-info (str host (api-data :s-info)))
+(def m-plist (str host (api-data :s-list)))
+(def m-lyric (str host (api-data :s-lyric)))
+(def m-url (str host (api-data :s-durl)))
 
 (def netease-api "https://music.163.com/api")
 (def netease-song-api (str netease-api "/song/detail/?id=%d&ids=[%d]"))
@@ -35,14 +39,9 @@
       "  -qs,\tQuery song name\n"
       "  -ql,\tQuery song list\n\n"
       "Optional:\n"
-      "  -dl,\tDownload lyric (default hard)\n"
-      "  \t(lyric: hard(内嵌), ext(外挂))\n"
-      "  -l,\tQuality level (default exhigh)\n"
-      "  \t(level: standard,exhigh,lossless,hires,jyeffect,sky,jymaster)"))
-;; standard：标准音质, exhigh：极高音质,
-;; lossless：无损音质 hires：Hi-Res音质,
-;; jyeffect：高清环绕声, sky：沉浸环绕声,
-;; jymaster：超清母带
+      "set in config.yaml default config\n"
+      "  -dl,\tDownload lyric mode\n"
+      "  -l,\tQuality level\n"))
 
 (def headers
   {"Content-Type" "application/json"
@@ -98,22 +97,6 @@
     (nil? link) " -- 已失效"
     (str/includes? link ".mp3") ".mp3"
     (str/includes? link ".flac") ".flac"))
-
-;; (declare switch-durl-ver get-music-durl)
-;; (defn- switch-durl-ver [sid]
-;;   (println "switch get durl api version")
-;;   (when (= "v2" (:mode @curr-durl!))
-;;     (reset! curr-durl! (:v1 durl-vers))
-;;     (get-music-durl sid)))
-
-;; (defn- get-music-durl [sid]
-;;   (let [resp (request-url (:url @curr-durl!) {:id (str sid) :level (:l @args!)})
-;;         status (:status resp)
-;;         body (:body resp)
-;;         durl ((:fn @curr-durl!) (:data body))]
-;;     (if (or (not= 200 status) (nil? durl))
-;;       (switch-durl-ver sid)
-;;       durl)))
 
 (defn- get-music-durl [sid]
   (let [resp (request-url m-url {:id (str sid) :level (:l @args!)})
@@ -258,8 +241,8 @@
                         (map download-music)
                         doall)}]
     (swap! args! assoc :path "./")
-    (when (not (contains? @args! :l)) (swap! args! assoc :l "exhigh"))
-    (when (not (contains? @args! :dl)) (swap! args! assoc :dl "hard"))
+    (when (not (contains? @args! :l)) (swap! args! assoc :l (:level opt-data)))
+    (when (not (contains? @args! :dl)) (swap! args! assoc :dl (:lyric opt-data)))
     (println @args!)
     (if (not= 1 (count flag))
       (println usage-doc)

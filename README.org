@@ -11,8 +11,8 @@
 ** 使用方式
 安装所需工具后运行
 #+begin_src shell
-$ bb music-dl
-
+❯ bb music-dl
+{:path ./, :l lossless, :dl hard}
 Usage:
   -pid, Play list ID
   -sid, Song ID
@@ -20,8 +20,9 @@ Usage:
   -ql,  Query song list
 
 Optional:
-  -l,   Quality level (default exhigh)
-        (level: standard,exhigh,lossless,hires,jyeffect,sky,jymaster)
+default config set in ./config.yaml
+  -dl,  Download lyric mode
+  -l,   Quality level
 #+end_src
 
 ** 演示
