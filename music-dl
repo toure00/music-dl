@@ -12,14 +12,15 @@
    [cheshire.core :as json]
    [clojure.pprint :refer [print-table]]))
 
-(def host "https://wyapi-2.toubiec.cn/api")
-(def m-plist (str host "/getPlaylistDetail"))
-(def m-info (str host "/getSongDetail"))
-(def m-lyric (str host "/getLyric"))
-(def durl-vers
-  {:v1 {:mode "v1" :url "https://wyapi.toubiec.cn/api/music/url" :fn (fn [x] (:url (first x)))}
-   :v2 {:mode "v2" :url (str host "/getMusicUrl") :fn (fn [x] (:url ((keyword (first (keys x)))x)))}})
-(def curr-durl! (atom (:v2 durl-vers) ))
+(def host "https://wyapi.toubiec.cn/api/music")
+(def m-info (str host "/detail"))
+(def m-plist (str host "/playlist"))
+(def m-lyric (str host "/lyric"))
+(def m-url (str host "/url"))
+;; (def durl-vers
+;;   {:v1 {:mode "v1" :url "https://wyapi.toubiec.cn/api/music/url" :fn (fn [x] (:url (first x)))}
+;;    :v2 {:mode "v2" :url (str host "/getMusicUrl") :fn (fn [x] (:url ((keyword (first (keys x)))x)))}})
+;; (def curr-durl! (atom (:v2 durl-vers) ))
 
 (def netease-api "https://music.163.com/api")
 (def netease-song-api (str netease-api "/song/detail/?id=%d&ids=[%d]"))
@@ -98,22 +99,29 @@
     (str/includes? link ".mp3") ".mp3"
     (str/includes? link ".flac") ".flac"))
 
-(declare switch-durl-ver get-music-durl)
-(defn- switch-durl-ver [sid]
-  (println "switch get durl api version")
-  (if (= "v2" (:mode @curr-durl!))
-    (do (reset! curr-durl! (:v1 durl-vers))
-        (get-music-durl sid))
-    "api error..."))
+;; (declare switch-durl-ver get-music-durl)
+;; (defn- switch-durl-ver [sid]
+;;   (println "switch get durl api version")
+;;   (when (= "v2" (:mode @curr-durl!))
+;;     (reset! curr-durl! (:v1 durl-vers))
+;;     (get-music-durl sid)))
+
+;; (defn- get-music-durl [sid]
+;;   (let [resp (request-url (:url @curr-durl!) {:id (str sid) :level (:l @args!)})
+;;         status (:status resp)
+;;         body (:body resp)
+;;         durl ((:fn @curr-durl!) (:data body))]
+;;     (if (or (not= 200 status) (nil? durl))
+;;       (switch-durl-ver sid)
+;;       durl)))
 
 (defn- get-music-durl [sid]
-  (let [resp (request-url (:url @curr-durl!) {:id (str sid) :level (:l @args!)})
+  (let [resp (request-url m-url {:id (str sid) :level (:l @args!)})
         status (:status resp)
         body (:body resp)
-        durl ((:fn @curr-durl!) (:data body))]
-    (if (or (not= 200 status) (nil? durl))
-      (switch-durl-ver sid)
-      durl)))
+        durl ((fn [x] (:url (first x))) (:data body))]
+    durl))
+(get-music-durl 103301)
 
 (defn- handle-song-info [s-info]
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
