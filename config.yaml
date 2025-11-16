@@ -1,6 +1,7 @@
 api:
   host: "https://wyapi.toubiec.cn/api/music"
   s-info: "/detail"
+  s-album: "/album"
   s-list: "/playlist"
   s-lyric: "/lyric"
   s-durl: "/url"

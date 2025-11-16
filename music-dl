@@ -11,8 +11,7 @@
    [clojure.string :as str]
    [clojure.set :as set]
    [cheshire.core :as json]
-   [clj-yaml.core :as yaml]
-   ))
+   [clj-yaml.core :as yaml]))
 
 (def conf-path (str (.getParent (fs/real-path *file*)) "/config.yaml"))
 
@@ -22,6 +21,7 @@
 
 (def host (:host api-data))
 (def m-info (str host (api-data :s-info)))
+(def m-album (str host (api-data :s-album)))
 (def m-plist (str host (api-data :s-list)))
 (def m-lyric (str host (api-data :s-lyric)))
 (def m-url (str host (api-data :s-durl)))
@@ -35,6 +35,7 @@
 (def usage-doc
   (str"Usage:\n"
       "  -pid,\tPlay list ID\n"
+      "  -aid,\tAlbum ID\n"
       "  -sid,\tSong ID\n"
       "  -qs,\tQuery song name\n"
       "  -ql,\tQuery song list\n\n"
@@ -47,8 +48,7 @@
   {"Content-Type" "application/json"
    "Accept" "application/json"
    "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-   "Sec-Fetch-Mode" "cors"
-   })
+   "Sec-Fetch-Mode" "cors"})
 
 (defn- request-url
   ([url]
@@ -104,7 +104,6 @@
         body (:body resp)
         durl ((fn [x] (:url (first x))) (:data body))]
     durl))
-(get-music-durl 103301)
 
 (defn- handle-song-info [s-info]
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
@@ -129,9 +128,9 @@
      :album-company (:company nm-album)
      :path (str (:path @args!) (str/replace (:name s-info) "/" " ") " - " (str/replace singer "/" "&"))}))
 
-(defn- get-music-list [pid]
+(defn- handle-mlist-info [id,url]
   (println "Get playlist...")
-  (let  [data (:data (:body (request-url m-plist {:id (str pid)})))]
+  (let  [data (:data (:body (request-url url {:id (str id)})))]
     ;; 创建歌单目录
     (println "Create playlist dir...")
     (when (not (.exists (io/file (:name data))))
@@ -140,16 +139,25 @@
     (println "Set playlist dir var...")
     (swap! args! assoc :path (str "./" (:name data) "/"))
     (println @args!)
+    data))
+
+(defn- get-music-list [pid]
+  (->> (handle-mlist-info pid m-plist)
+       :tracks
+       (map handle-song-info)))
+
+(defn- get-album-list [aid]
+  (let [data (handle-mlist-info aid m-album)]
     (->> data
          :tracks
+         (map #(assoc % :picUrl (data :picUrl)))
          (map handle-song-info))))
 
 (defn- get-music-info [sid]
   (->> (request-url m-info {:id (str sid)})
       :body
       :data
-      (#(handle-song-info %))
-      ))
+      (#(handle-song-info %))))
 
 (defn- get-lyric [sid]
   (let [data (:data (:body (request-url m-lyric {:id (str sid)})))]
@@ -162,9 +170,9 @@
            (map #(str/split % #"]"))
            (reduce (fn [acc [k v]] (update acc (keyword (str k)) (fnil conj []) v)) (sorted-map))
            (map flatten)
-           ;; 换行
-           ;; (map #(str "[" (name (first %) ) "]" (str/join " / " (remove nil? (rest %)))))
            ;; 同一行
+           ;; (map #(str "[" (name (first %) ) "]" (str/join " / " (remove nil? (rest %)))))
+           ;; 换行
            (map #(str "[" (name (first %)) "]" (second %)
                       (when (= 3 (count (remove nil? %)))
                         (str "\n" "[" (name (first %)) "]" (last %)))))
@@ -200,7 +208,7 @@
                 "-metadata" (str "date=" (:album-publish-time sobj))
                 "-metadata" (str "publisher=" (:album-company sobj))
                 "-metadata" (str "copyright=" (:album-company sobj))
-                "-metadata" (str "RELEASETYPE=" (:album-type sobj))
+                "-metadata" (str "release_type=" (:album-type sobj))
                 "-metadata" (str "album_sub_type=" (:album-sub-type sobj))
                 "-metadata" (str "source_song=https://music.163.com/song?id=" (:id sobj))
                 "-metadata" (str "source_album=https://music.163.com/album?id=" (:album-id sobj))
@@ -225,12 +233,15 @@
       (spit l-path lyric))))
 
 (defn- main []
-  (let [flag (set/intersection (set (keys @args!)) #{:pid :sid :qs :ql})
-        exec {:pid #(->> (get-music-list (:pid @args!))
+  (let [flag (set/intersection (set (keys @args!)) #{:pid :sid :aid :qs :ql})
+        exec {:sid #(->> (get-music-info (:sid @args!))
+                         download-music)
+              :aid #(->> (get-album-list (:aid @args!))
                          (map download-music)
                          doall)
-              :sid #(->> (get-music-info (:sid @args!))
-                         download-music)
+              :pid #(->> (get-music-list (:pid @args!))
+                         (map download-music)
+                         doall)
               :qs #(->> (query-music (:qs qargs) (:qs @args!))
                         select-music
                         get-music-info
