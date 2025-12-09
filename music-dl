@@ -19,18 +19,20 @@
 (def api-data (:api conf-data))
 (def opt-data (:opt conf-data))
 
-(def host (:host api-data))
-(def m-info (str host (api-data :s-info)))
-(def m-album (str host (api-data :s-album)))
-(def m-plist (str host (api-data :s-list)))
-(def m-lyric (str host (api-data :s-lyric)))
-(def m-url (str host (api-data :s-durl)))
+(def host ((keyword (:api opt-data)) api-data))
+(def m-info  (str host (api-data :info)))
+(def m-album (str host (api-data :album)))
+(def m-plist (str host (api-data :list)))
+(def m-lyric (str host (api-data :lyric)))
+(def m-url   (str host (api-data :durl)))
 
 (def netease-api "https://music.163.com/api")
 (def netease-song-api (str netease-api "/song/detail/?id=%d&ids=[%d]"))
 (def netease-search-api (str netease-api "/search/get/web?csrf_token=hlpretag=&hlposttag=&offset=0&total=true&limit=20&type=%d&s=%s"))
 (def netease-lyric-api (str netease-api "/song/lyric?os=pc&lv=-1&id="))
 (def args! (atom (cli/parse-opts *command-line-args* {:verbose false}) ))
+
+(def fname-regex #"[`?*<>\|\"]")
 
 (def usage-doc
   (str"Usage:\n"
@@ -40,7 +42,6 @@
       "  -qs,\tQuery song name\n"
       "  -ql,\tQuery song list\n\n"
       "Optional:\n"
-      "set in config.yaml default config\n"
       "  -dl,\tDownload lyric mode\n"
       "  -l,\tQuality level\n"))
 
@@ -50,12 +51,13 @@
    "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
    "Sec-Fetch-Mode" "cors"})
 
+(def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
 (defn- request-url
   ([url]
    (request-url url nil))
   ([url arg]
    (let [resp (if arg
-               (http/post url {:headers headers :body (json/generate-string arg)})
+               (http/post url {:headers headers :body (json/generate-string arg) :client client})
                (http/get url {:headers headers}))]
      {:status (:status resp) :body (json/parse-string (:body resp) true)})))
      
@@ -103,13 +105,18 @@
         status (:status resp)
         body (:body resp)
         durl ((fn [x] (:url (first x))) (:data body))]
+    ;; (println durl)
     durl))
 
 (defn- handle-song-info [s-info]
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
         singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
         nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
-        nm-album (:album nm-info)]
+        nm-album (:album nm-info)
+        p-time (long (:publishTime nm-album))]
+    ;; (println (:name nm-info))
+    ;; (println (:id nm-info))
+    ;; (println (str (:publishTime nm-album) "-" (:name nm-info) "-" (:id nm-info)))
     {:id (:id s-info)
      :picurl picurl
      :name (:name s-info)
@@ -124,21 +131,24 @@
      :album-type (:type nm-album)
      :album-sub-type (:subType nm-album)
      :album-size (:size nm-album)
-     :album-publish-time (.format (java.text.SimpleDateFormat. "yyyy-MM-dd") (java.util.Date. (:publishTime nm-album)))
      :album-company (:company nm-album)
-     :path (str (:path @args!) (str/replace (:name s-info) "/" " ") " - " (str/replace singer "/" "&"))}))
+     :album-publish-time (if (#{0 -28800000} p-time)
+                           "" (.format (java.text.SimpleDateFormat. "yyyy-MM-dd") (java.util.Date. p-time)))
+     :path (str (:path @args!) (str/replace
+                                (str/replace (str (:name s-info) " - " singer ) "/" "&")
+                                fname-regex ""))}))
 
 (defn- handle-mlist-info [id,url]
   (println "Get playlist...")
   (let  [data (:data (:body (request-url url {:id (str id)})))]
-    ;; 创建歌单目录
-    (println "Create playlist dir...")
-    (when (not (.exists (io/file (:name data))))
-      (.mkdir (io/file (:name data))))
     ;; 设置歌单名变量
     (println "Set playlist dir var...")
-    (swap! args! assoc :path (str "./" (:name data) "/"))
+    (swap! args! assoc :path (str "./" (str/replace (str/replace (:name data) #"[:/]" "_") fname-regex "") "/"))
     (println @args!)
+    ;; 创建歌单目录
+    (println "Create playlist dir...")
+    (when (not (.exists (io/file (:path @args!))))
+      (.mkdir (io/file (:path @args!))))
     data))
 
 (defn- get-music-list [pid]
@@ -182,12 +192,12 @@
   (if (not (.exists (io/file path)))
     (do (println (str "Downloading -> " path))
         false)
-    (do (println (str "Exists..." path))
+    (do (println (str "Exists..... -> " path))
         (Thread/sleep 1000)
         true)))
 
 (defn- download-music [sobj]
-  ;; (print sobj)
+  ;; (print (:album-publish-time sobj))
   (let [durl (get-music-durl (:id sobj))
         suffix (check-link durl)
         f-path (str (:path sobj) suffix)
@@ -221,14 +231,15 @@
                   ["-metadata" (str "lyrics=" lyric)
                    "-metadata" (str "tracknumber=" (:song-no sobj))
                    "-metadata" (str "tracktotal="  (:album-size sobj))])
+                "-metadata" "download_tool=https://github.com/toure00/music-dl"
                 f-path]]
     ;; downlaod music
     (when (not (file-exists? f-path))
       (let [arg (remove nil? (flatten f-args))]
-           ;; (doall (map println arg))
+           ;; (println (apply p/sh "ffmpeg" arg))
            (apply p/sh "ffmpeg" arg)))
     ;; downlaod lyrics
-    (when (and (= (:dl @args!) "ext")
+    (when (and (or (= (:dl @args!) "ext") (= ".mp3" suffix))
            (not (file-exists?  l-path)))
       (spit l-path lyric))))
 
