@@ -48,7 +48,7 @@
 (def headers
   {"Content-Type" "application/json"
    "Accept" "application/json"
-   "User-Agent" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+   "User-Agent" "curl/8.17.0"
    "Sec-Fetch-Mode" "cors"})
 
 (def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
@@ -145,6 +145,7 @@
     (println "Set playlist dir var...")
     (swap! args! assoc :path (str "./" (str/replace (str/replace (:name data) #"[:/]" "_") fname-regex "") "/"))
     (println @args!)
+    ;; (println data)
     ;; 创建歌单目录
     (println "Create playlist dir...")
     (when (not (.exists (io/file (:path @args!))))

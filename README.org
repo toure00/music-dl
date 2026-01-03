@@ -28,16 +28,17 @@ Optional:
 ** 配置文件
 配置文件 [[./config.yaml][config.yaml]] 和脚本在同一层目录下，
 - api (api 参数)
-  1. host  (api host)
-  2. info  (歌曲信息api)
-  3. album (专辑api)
-  4. list  (歌单api)
-  5. lyric (歌词api)
-  6. durl  (歌曲下载链接api)
+  + v*    (api host version)
+  + info  (歌曲信息api)
+  + album (专辑api)
+  + list  (歌单api)
+  + lyric (歌词api)
+  + durl  (歌曲下载链接api)
 
 - opt (设置默认可选参数)
-  1. level (音质等级)
-  2. lyric (歌词格式，hard[内嵌], ext[外挂])
+  + api   (选择 api 版本)
+  + level (音质等级)
+  + lyric (歌词格式，hard[内嵌], ext[外挂])
 
 ** 演示
 https://github.com/user-attachments/assets/0b54901c-c64f-406d-813a-a928be93b902

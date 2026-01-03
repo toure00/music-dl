@@ -1,6 +1,6 @@
 api:
-  host-v1: "https://wyapi-1.toubiec.cn/api/music"
-  host-v2: "https://wyapi-2.toubiec.cn/api/music"
+  v1: "https://wyapi-1.toubiec.cn/api/music"
+  v2: "https://wyapi-2.toubiec.cn/api/music"
   info: "/detail"
   album: "/album"
   list: "/playlist"
@@ -8,7 +8,7 @@ api:
   durl: "/url"
 
 opt:
-  api: "host-v2"
+  api: "v1"
 
   # standard: 标准音质, exhigh: 极高音质, lossless: 无损音质 hires: Hi-Res音质,
   # jyeffect: 高清环绕声, sky: 沉浸环绕声, jymaster: 超清母带
