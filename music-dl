@@ -48,7 +48,7 @@
 (def headers
   {"Content-Type" "application/json"
    "Accept" "application/json"
-   "User-Agent" "curl/8.17.0"
+   "User-Agent" "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0"
    "Sec-Fetch-Mode" "cors"})
 
 (def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
@@ -74,6 +74,22 @@
                     (map #(hash-map :id (:id %) :desc
                                     (format "%s - (共 %d 首) - (播放量:%d) - (收藏量:%d)"
                                             (:name %) (:trackCount %) (:playCount %) (:bookCount %))))))}})
+
+(defn- render-progress [current total]
+      (let [width 40
+           percent (/ current total)
+           filled (int (* width percent))
+           bar (str "[" (apply str (repeat filled "█"))
+                    (apply str (repeat (- width filled) " ")) "]")]
+           (print (format "\r%s %3d%% (%d/%d)" bar (int (* percent 100)) current total))
+           (flush)))
+
+(defn- show-progress []
+  (when (and (contains? @args! :current) (contains? @args! :total))
+    (render-progress (:current @args!) (:total @args!))))
+
+(defn- log [msg]
+  (println (str "\r\033[K" msg)))
 
 (defn- select-music [qlist]
   (doseq [ql qlist]
@@ -114,9 +130,10 @@
         nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
         nm-album (:album nm-info)
         p-time (long (:publishTime nm-album))]
-    ;; (println (:name nm-info))
-    ;; (println (:id nm-info))
-    ;; (println (str (:publishTime nm-album) "-" (:name nm-info) "-" (:id nm-info)))
+    ;; (println "---------------------------")
+    ;; (println "id" (:id nm-info))
+    ;; (println "name: " (:name nm-info))
+    ;; (println "publishTime: " (:publishTime nm-album))
     {:id (:id s-info)
      :picurl picurl
      :name (:name s-info)
@@ -191,9 +208,11 @@
 
 (defn- file-exists? [path]
   (if (not (.exists (io/file path)))
-    (do (println (str "Downloading -> " path))
+    (do (log (str "Downloading -> " path))
+        (show-progress)
         false)
-    (do (println (str "Exists..... -> " path))
+    (do (log (str "Exists..... -> " path))
+        (show-progress)
         (Thread/sleep 1000)
         true)))
 
@@ -221,8 +240,6 @@
                 "-metadata" (str "copyright=" (:album-company sobj))
                 "-metadata" (str "release_type=" (:album-type sobj))
                 "-metadata" (str "album_sub_type=" (:album-sub-type sobj))
-                "-metadata" (str "source_song=https://music.163.com/song?id=" (:id sobj))
-                "-metadata" (str "source_album=https://music.163.com/album?id=" (:album-id sobj))
                 (when (not (nil? (:song-alias sobj))) ["-metadata" (str "alias=" (:song-alias sobj))])
                 (when (not (nil? (:song-trans sobj))) ["-metadata" (str "trans_song=" (:song-trans sobj))])
                 (when (not (nil? (:album-trans sobj))) ["-metadata" (str "trans_album=" (:album-trans sobj))])
@@ -232,6 +249,8 @@
                   ["-metadata" (str "lyrics=" lyric)
                    "-metadata" (str "tracknumber=" (:song-no sobj))
                    "-metadata" (str "tracktotal="  (:album-size sobj))])
+                "-metadata" (str "source_song=https://music.163.com/song?id=" (:id sobj))
+                "-metadata" (str "source_album=https://music.163.com/album?id=" (:album-id sobj))
                 "-metadata" "download_tool=https://github.com/toure00/music-dl"
                 f-path]]
     ;; downlaod music
@@ -244,15 +263,21 @@
            (not (file-exists?  l-path)))
       (spit l-path lyric))))
 
+(defn- download-play-list [x]
+  (do (swap! args! assoc :total (count x))
+      (map-indexed
+       (fn [i v]
+         (do (swap! args! assoc :current (inc i))
+             (download-music v))) x)))
+
 (defn- main []
-  (let [flag (set/intersection (set (keys @args!)) #{:pid :sid :aid :qs :ql})
-        exec {:sid #(->> (get-music-info (:sid @args!))
+  (let [exec {:sid #(->> (get-music-info (:sid @args!))
                          download-music)
               :aid #(->> (get-album-list (:aid @args!))
-                         (map download-music)
+                         download-play-list
                          doall)
               :pid #(->> (get-music-list (:pid @args!))
-                         (map download-music)
+                         download-play-list
                          doall)
               :qs #(->> (query-music (:qs qargs) (:qs @args!))
                         select-music
@@ -261,8 +286,9 @@
               :ql #(->> (query-music (:ql qargs) (:ql @args!))
                         select-music
                         get-music-list
-                        (map download-music)
-                        doall)}]
+                        download-play-list
+                        doall)}
+        flag (set/intersection (set (keys @args!)) (set (keys exec)))]
     (swap! args! assoc :path "./")
     (when (not (contains? @args! :l)) (swap! args! assoc :l (:level opt-data)))
     (when (not (contains? @args! :dl)) (swap! args! assoc :dl (:lyric opt-data)))
@@ -271,6 +297,6 @@
       (println usage-doc)
       (do (println "Start...")
           (((first flag) exec))
-          (println "Finish!")))))
+          (println "\nFinish!")))))
 
 (main)
