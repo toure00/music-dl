@@ -48,7 +48,7 @@
 (def headers
   {"Content-Type" "application/json"
    "Accept" "application/json"
-   "User-Agent" "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0"
+   "User-Agent" "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0"
    "Sec-Fetch-Mode" "cors"})
 
 (def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
@@ -56,9 +56,12 @@
   ([url]
    (request-url url nil))
   ([url arg]
+   ;; (println url)
+   ;; (println arg)
    (let [resp (if arg
                (http/post url {:headers headers :body (json/generate-string arg) :client client})
                (http/get url {:headers headers}))]
+     ;; (println resp)
      {:status (:status resp) :body (json/parse-string (:body resp) true)})))
      
 (def qargs
@@ -123,69 +126,6 @@
         durl ((fn [x] (:url (first x))) (:data body))]
     ;; (println durl)
     durl))
-
-(defn- handle-song-info [s-info]
-  (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
-        singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
-        nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
-        nm-album (:album nm-info)
-        p-time (long (:publishTime nm-album))]
-    ;; (println "---------------------------")
-    ;; (println "id" (:id nm-info))
-    ;; (println "name: " (:name nm-info))
-    ;; (println "publishTime: " (:publishTime nm-album))
-    {:id (:id s-info)
-     :picurl picurl
-     :name (:name s-info)
-     :album (:album s-info)
-     :singer singer
-     :song-no (:no nm-info)
-     :song-alias (if (empty? (:alias nm-info)) nil (str/join "," (:alias nm-info)))
-     :song-trans (:transName nm-info)
-     :album-id (:id nm-album)
-     :album-artists (str/join "," (map #(:name %) (:artists nm-album)))
-     :album-trans (:transName nm-album)
-     :album-type (:type nm-album)
-     :album-sub-type (:subType nm-album)
-     :album-size (:size nm-album)
-     :album-company (:company nm-album)
-     :album-publish-time (if (#{0 -28800000} p-time)
-                           "" (.format (java.text.SimpleDateFormat. "yyyy-MM-dd") (java.util.Date. p-time)))
-     :path (str (:path @args!) (str/replace
-                                (str/replace (str (:name s-info) " - " singer ) "/" "&")
-                                fname-regex ""))}))
-
-(defn- handle-mlist-info [id,url]
-  (println "Get playlist...")
-  (let  [data (:data (:body (request-url url {:id (str id)})))]
-    ;; 设置歌单名变量
-    (println "Set playlist dir var...")
-    (swap! args! assoc :path (str "./" (str/replace (str/replace (:name data) #"[:/]" "_") fname-regex "") "/"))
-    (println @args!)
-    ;; (println data)
-    ;; 创建歌单目录
-    (println "Create playlist dir...")
-    (when (not (.exists (io/file (:path @args!))))
-      (.mkdir (io/file (:path @args!))))
-    data))
-
-(defn- get-music-list [pid]
-  (->> (handle-mlist-info pid m-plist)
-       :tracks
-       (map handle-song-info)))
-
-(defn- get-album-list [aid]
-  (let [data (handle-mlist-info aid m-album)]
-    (->> data
-         :tracks
-         (map #(assoc % :picUrl (data :picUrl)))
-         (map handle-song-info))))
-
-(defn- get-music-info [sid]
-  (->> (request-url m-info {:id (str sid)})
-      :body
-      :data
-      (#(handle-song-info %))))
 
 (defn- get-lyric [sid]
   (let [data (:data (:body (request-url m-lyric {:id (str sid)})))]
@@ -263,21 +203,84 @@
            (not (file-exists?  l-path)))
       (spit l-path lyric))))
 
-(defn- download-play-list [x]
-  (do (swap! args! assoc :total (count x))
-      (map-indexed
-       (fn [i v]
-         (do (swap! args! assoc :current (inc i))
-             (download-music v))) x)))
+(defn- handle-song-info [s-info]
+  (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
+        singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
+        nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
+        nm-album (:album nm-info)
+        p-time (:publishTime nm-album)
+        sobj {:id (:id s-info)
+              :picurl picurl
+              :name (:name s-info)
+              :album (:album s-info)
+              :singer singer
+              :song-no (:no nm-info)
+              :song-alias (if (empty? (:alias nm-info)) nil (str/join "," (:alias nm-info)))
+              :song-trans (:transName nm-info)
+              :album-id (:id nm-album)
+              :album-artists (str/join "," (map #(:name %) (:artists nm-album)))
+              :album-trans (:transName nm-album)
+              :album-type (:type nm-album)
+              :album-sub-type (:subType nm-album)
+              :album-size (:size nm-album)
+              :album-company (:company nm-album)
+              :album-publish-time (if (#{0 -28800000} (long p-time))
+                                    "" (.format (java.text.SimpleDateFormat. "yyyy-MM-dd") (java.util.Date. p-time)))
+              :path (str (:path @args!) (str/replace
+                                         (str/replace (str (:name s-info) " - " singer ) "/" "&")
+                                         fname-regex ""))}]
+    (download-music sobj)))
+
+(defn- get-mlist-info [id,url]
+  (println "Get playlist...")
+  (let  [data (:data (:body (request-url url {:id (str id)})))]
+    ;; 设置歌单名变量
+    (println "Set playlist dir var...")
+    (swap! args! assoc :path (str "./" (str/replace (str/replace (:name data) #"[:/]" "_") fname-regex "") "/"))
+    (swap! args! assoc :total (count (:tracks data)))
+    (println @args!)
+    ;; (println data)
+    ;; 创建歌单目录
+    (println "Create playlist dir...")
+    (when (not (.exists (io/file (:path @args!))))
+      (.mkdir (io/file (:path @args!))))
+    data))
+
+(defn- download-music-list [m-list]
+  (map-indexed
+   (fn [i v]
+     (do (swap! args! assoc :current (inc i))
+         (handle-song-info v)))
+   m-list))
+
+(defn- get-music-list [pid]
+  (->> (get-mlist-info pid m-plist)
+       :tracks
+       ;; (map handle-song-info)
+       download-music-list
+       ))
+
+(defn- get-album-list [aid]
+  (let [data (get-mlist-info aid m-album)]
+    (->> data
+         :tracks
+         (map #(assoc % :picUrl (data :picUrl)))
+         ;; (map handle-song-info)
+         download-music-list
+         )))
+
+(defn- get-music-info [sid]
+  (->> (request-url m-info {:id (str sid)})
+      :body
+      :data
+      (#(handle-song-info %))))
 
 (defn- main []
   (let [exec {:sid #(->> (get-music-info (:sid @args!))
                          download-music)
               :aid #(->> (get-album-list (:aid @args!))
-                         download-play-list
                          doall)
               :pid #(->> (get-music-list (:pid @args!))
-                         download-play-list
                          doall)
               :qs #(->> (query-music (:qs qargs) (:qs @args!))
                         select-music
@@ -286,7 +289,6 @@
               :ql #(->> (query-music (:ql qargs) (:ql @args!))
                         select-music
                         get-music-list
-                        download-play-list
                         doall)}
         flag (set/intersection (set (keys @args!)) (set (keys exec)))]
     (swap! args! assoc :path "./")
