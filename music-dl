@@ -32,7 +32,7 @@
 (def netease-lyric-api (str netease-api "/song/lyric?os=pc&lv=-1&id="))
 (def args! (atom (cli/parse-opts *command-line-args* {:verbose false}) ))
 
-(def fname-regex #"[`?*<>\|\"]")
+(def fname-regex #"[:`?*<>\|\"]")
 
 (def usage-doc
   (str"Usage:\n"
@@ -269,14 +269,14 @@
          download-music-list
          )))
 
-(defn- get-music-info [sid]
+(defn- get-music [sid]
   (->> (request-url m-info {:id (str sid)})
       :body
       :data
       (#(handle-song-info %))))
 
 (defn- main []
-  (let [exec {:sid #(->> (get-music-info (:sid @args!))
+  (let [exec {:sid #(->> (get-music (:sid @args!))
                          download-music)
               :aid #(->> (get-album-list (:aid @args!))
                          doall)
@@ -284,7 +284,7 @@
                          doall)
               :qs #(->> (query-music (:qs qargs) (:qs @args!))
                         select-music
-                        get-music-info
+                        get-music
                         download-music)
               :ql #(->> (query-music (:ql qargs) (:ql @args!))
                         select-music
