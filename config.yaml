@@ -1,14 +1,22 @@
-api:
-  v1: "https://wyapi-1.toubiec.cn/api/music"
-  v2: "https://wyapi-2.toubiec.cn/api/music"
+api-v1:
+  host: "https://wyapi-1.toubiec.cn/api/music"
   info: "/detail"
   album: "/album"
   list: "/playlist"
   lyric: "/lyric"
   durl: "/url"
 
+api-v2:
+  host: "https://wyapi-eo.toubiec.cn/api"
+  info: "/getSongInfo"
+  album: "/album"
+  list: "/getPlaylist"
+  lyric: "/getSongLyric"
+  durl: "/getSongUrl"
+
+
 opt:
-  api: "v1"
+  api: "api-v2"
 
   # standard: 标准音质, exhigh: 极高音质, lossless: 无损音质
   # hires: Hi-Res音质, jyeffect: 高清环绕声, sky: 沉浸环绕声, jymaster: 超清母带

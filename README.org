@@ -27,8 +27,8 @@ Optional:
 
 ** 配置文件
 配置文件 [[./config.yaml][config.yaml]] 和脚本在同一层目录下，
-- api (api 参数)
-  + v*    (api host version)
+- api 
+  + host  (api host version)
   + info  (歌曲信息api)
   + album (专辑api)
   + list  (歌单api)

@@ -16,10 +16,10 @@
 (def conf-path (str (.getParent (fs/real-path *file*)) "/config.yaml"))
 
 (def conf-data (yaml/parse-string (slurp conf-path)))
-(def api-data (:api conf-data))
 (def opt-data (:opt conf-data))
+(def api-data ((keyword (:api opt-data)) conf-data))
 
-(def host ((keyword (:api opt-data)) api-data))
+(def host    (:host api-data))
 (def m-info  (str host (api-data :info)))
 (def m-album (str host (api-data :album)))
 (def m-plist (str host (api-data :list)))
@@ -49,13 +49,15 @@
   {"Content-Type" "application/json"
    "Accept" "application/json"
    "User-Agent" "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:146.0) Gecko/20100101 Firefox/146.0"
-   "Sec-Fetch-Mode" "cors"})
+   "Sec-Fetch-Mode" "cors"
+   })
 
 (def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
 (defn- request-url
   ([url]
    (request-url url nil))
   ([url arg]
+   ;; (println "------------------------------------------------------------------")
    ;; (println url)
    ;; (println arg)
    (let [resp (if arg
@@ -123,8 +125,10 @@
   (let [resp (request-url m-url {:id (str sid) :level (:l @args!)})
         status (:status resp)
         body (:body resp)
-        durl ((fn [x] (:url (first x))) (:data body))]
-    ;; (println durl)
+        ;; durl ((fn [x] (:url (first x))) (:data body))
+        durl (:url (:data body))]
+    ;; (println resp)  ;; get-music-durl
+    ;; (println durl)  ;; get-music-durl
     durl))
 
 (defn- get-lyric [sid]
@@ -157,7 +161,8 @@
         true)))
 
 (defn- download-music [sobj]
-  ;; (print (:album-publish-time sobj))
+  ;; (print sobj) ;; download-music
+  ;; (print (:album-publish-time sobj)) ;; download-music
   (let [durl (get-music-durl (:id sobj))
         suffix (check-link durl)
         f-path (str (:path sobj) suffix)
@@ -196,7 +201,7 @@
     ;; downlaod music
     (when (not (file-exists? f-path))
       (let [arg (remove nil? (flatten f-args))]
-           ;; (println (apply p/sh "ffmpeg" arg))
+           ;; (println (apply p/sh "ffmpeg" arg)) ;;
            (apply p/sh "ffmpeg" arg)))
     ;; downlaod lyrics
     (when (and (or (= (:dl @args!) "ext") (= ".mp3" suffix))
@@ -204,6 +209,7 @@
       (spit l-path lyric))))
 
 (defn- handle-song-info [s-info]
+  ;; (println s-info) ;; handle-song-info
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
         singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
         nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
@@ -237,7 +243,7 @@
     ;; 设置歌单名变量
     (println "Set playlist dir var...")
     (swap! args! assoc :path (str "./" (str/replace (str/replace (:name data) #"[:/]" "_") fname-regex "") "/"))
-    (swap! args! assoc :total (count (:tracks data)))
+    (swap! args! assoc :total (count (:songs data)))
     (println @args!)
     ;; (println data)
     ;; 创建歌单目录
@@ -255,7 +261,7 @@
 
 (defn- get-music-list [pid]
   (->> (get-mlist-info pid m-plist)
-       :tracks
+       :songs
        ;; (map handle-song-info)
        download-music-list
        ))
@@ -276,16 +282,14 @@
       (#(handle-song-info %))))
 
 (defn- main []
-  (let [exec {:sid #(->> (get-music (:sid @args!))
-                         download-music)
+  (let [exec {:sid #(->> (get-music (:sid @args!)))
               :aid #(->> (get-album-list (:aid @args!))
                          doall)
               :pid #(->> (get-music-list (:pid @args!))
                          doall)
               :qs #(->> (query-music (:qs qargs) (:qs @args!))
                         select-music
-                        get-music
-                        download-music)
+                        get-music)
               :ql #(->> (query-music (:ql qargs) (:ql @args!))
                         select-music
                         get-music-list
