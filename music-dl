@@ -33,6 +33,7 @@
 (def args! (atom (cli/parse-opts *command-line-args* {:verbose false}) ))
 
 (def fname-regex #"[:`?*<>\|\"]")
+(defn- ip-generator [] (str/join "." (repeatedly 4 #(inc (rand-int 255)))))
 
 (def usage-doc
   (str"Usage:\n"
@@ -53,6 +54,7 @@
    })
 
 (def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
+
 (defn- request-url
   ([url]
    (request-url url nil))
@@ -77,7 +79,7 @@
                (->> x
                     :playlists
                     (map #(hash-map :id (:id %) :desc
-                                    (format "%s - (共 %d 首) - (播放量:%d) - (收藏量:%d)"
+                                    (format "%s - (共 %d 首) - (🎧:%d) - (💗:%d)"
                                             (:name %) (:trackCount %) (:playCount %) (:bookCount %))))))}})
 
 (defn- render-progress [current total]
@@ -122,7 +124,7 @@
     (str/includes? link ".flac") ".flac"))
 
 (defn- get-music-durl [sid]
-  (let [resp (request-url m-url {:id (str sid) :level (:l @args!)})
+  (let [resp (request-url m-url {:id (str sid) :level (:l @args!) :ip (ip-generator)})
         status (:status resp)
         body (:body resp)
         ;; durl ((fn [x] (:url (first x))) (:data body))
@@ -132,7 +134,7 @@
     durl))
 
 (defn- get-lyric [sid]
-  (let [data (:data (:body (request-url m-lyric {:id (str sid)})))]
+  (let [data (:data (:body (request-url m-lyric {:id (str sid) :ip (ip-generator)})))]
     (if (= (:tlyric data) "")
       (:lrc data)
       (->> data
@@ -151,62 +153,64 @@
            (str/join "\n")))))
 
 (defn- file-exists? [path]
-  (if (not (.exists (io/file path)))
+  (if (and (not (.exists (io/file (str path ".mp3"))))
+           (not (.exists (io/file (str path ".flac")))))
     (do (log (str "Downloading -> " path))
         (show-progress)
         false)
     (do (log (str "Exists..... -> " path))
         (show-progress)
-        (Thread/sleep 1000)
+        ;; (Thread/sleep 1000)
         true)))
 
 (defn- download-music [sobj]
   ;; (print sobj) ;; download-music
   ;; (print (:album-publish-time sobj)) ;; download-music
-  (let [durl (get-music-durl (:id sobj))
-        suffix (check-link durl)
-        f-path (str (:path sobj) suffix)
-        l-path (str (:path sobj) ".lrc")
-        lyric (get-lyric (:id sobj))
-        f-args ["-i" durl
-                "-i" (:picurl sobj)
-                "-c" "copy"
-                "-map" "0"
-                "-map" "1"
-                "-disposition:v:0" "attached_pic"
-                "-metadata" "encoded_by=ffmpeg"
-                "-metadata" (str "lyrics=" lyric)
-                "-metadata" (str "title=" (:name sobj))
-                "-metadata" (str "artist=" (:singer sobj))
-                "-metadata" (str "album=" (:album sobj))
-                "-metadata" (str "album_artist=" (:album-artists sobj))
-                "-metadata" (str "date=" (:album-publish-time sobj))
-                "-metadata" (str "publisher=" (:album-company sobj))
-                "-metadata" (str "copyright=" (:album-company sobj))
-                "-metadata" (str "release_type=" (:album-type sobj))
-                "-metadata" (str "album_sub_type=" (:album-sub-type sobj))
-                (when (not (nil? (:song-alias sobj))) ["-metadata" (str "alias=" (:song-alias sobj))])
-                (when (not (nil? (:song-trans sobj))) ["-metadata" (str "trans_song=" (:song-trans sobj))])
-                (when (not (nil? (:album-trans sobj))) ["-metadata" (str "trans_album=" (:album-trans sobj))])
-                (if (= ".mp3" suffix)
-                  ["-metadata" (str "lyrics=" lyric)
-                   "-metadata" (str "track=" (:song-no sobj) "/" (:album-size sobj))]
-                  ["-metadata" (str "lyrics=" lyric)
-                   "-metadata" (str "tracknumber=" (:song-no sobj))
-                   "-metadata" (str "tracktotal="  (:album-size sobj))])
-                "-metadata" (str "source_song=https://music.163.com/song?id=" (:id sobj))
-                "-metadata" (str "source_album=https://music.163.com/album?id=" (:album-id sobj))
-                "-metadata" "download_tool=https://github.com/toure00/music-dl"
-                f-path]]
-    ;; downlaod music
-    (when (not (file-exists? f-path))
-      (let [arg (remove nil? (flatten f-args))]
-           ;; (println (apply p/sh "ffmpeg" arg)) ;;
-           (apply p/sh "ffmpeg" arg)))
-    ;; downlaod lyrics
-    (when (and (or (= (:dl @args!) "ext") (= ".mp3" suffix))
-           (not (file-exists?  l-path)))
-      (spit l-path lyric))))
+  ;; downlaod music
+  (when (not (file-exists? (:path sobj)))
+    (let [durl (get-music-durl (:id sobj))
+          suffix (check-link durl)
+          f-path (str (:path sobj) suffix)
+          l-path (str (:path sobj) ".lrc")
+          lyric (get-lyric (:id sobj))
+          f-args ["-i" durl
+                  "-i" (:picurl sobj)
+                  "-c" "copy"
+                  "-map" "0"
+                  "-map" "1"
+                  "-disposition:v:0" "attached_pic"
+                  "-metadata" "encoded_by=ffmpeg"
+                  "-metadata" (str "lyrics=" lyric)
+                  "-metadata" (str "title=" (:name sobj))
+                  "-metadata" (str "artist=" (:singer sobj))
+                  "-metadata" (str "album=" (:album sobj))
+                  "-metadata" (str "album_artist=" (:album-artists sobj))
+                  "-metadata" (str "date=" (:album-publish-time sobj))
+                  "-metadata" (str "publisher=" (:album-company sobj))
+                  "-metadata" (str "copyright=" (:album-company sobj))
+                  "-metadata" (str "release_type=" (:album-type sobj))
+                  "-metadata" (str "album_sub_type=" (:album-sub-type sobj))
+                  (when (not (nil? (:song-alias sobj))) ["-metadata" (str "alias=" (:song-alias sobj))])
+                  (when (not (nil? (:song-trans sobj))) ["-metadata" (str "trans_song=" (:song-trans sobj))])
+                  (when (not (nil? (:album-trans sobj))) ["-metadata" (str "trans_album=" (:album-trans sobj))])
+                  (if (= ".mp3" suffix)
+                    ["-metadata" (str "lyrics=" lyric)
+                     "-metadata" (str "track=" (:song-no sobj) "/" (:album-size sobj))]
+                    ["-metadata" (str "lyrics=" lyric)
+                     "-metadata" (str "tracknumber=" (:song-no sobj))
+                     "-metadata" (str "tracktotal="  (:album-size sobj))])
+                  "-metadata" (str "source_song=https://music.163.com/song?id=" (:id sobj))
+                  "-metadata" (str "source_album=https://music.163.com/album?id=" (:album-id sobj))
+                  "-metadata" "download_tool=https://github.com/toure00/music-dl"
+                  f-path]
+          arg (remove nil? (flatten f-args))]
+      ;; (println (apply p/sh "ffmpeg" arg)) ;;
+      (apply p/sh "ffmpeg" arg)
+      ;; downlaod lyrics
+      (when (and (or (= (:dl @args!) "ext") (= ".mp3" suffix))
+                 (not (file-exists?  l-path)))
+        (spit l-path lyric)))
+    ))
 
 (defn- handle-song-info [s-info]
   ;; (println s-info) ;; handle-song-info
@@ -239,7 +243,7 @@
 
 (defn- get-mlist-info [id,url]
   (println "Get playlist...")
-  (let  [data (:data (:body (request-url url {:id (str id)})))]
+  (let  [data (:data (:body (request-url url {:id (str id) :ip (ip-generator) :limit 1000 :offset 0})))]
     ;; 设置歌单名变量
     (println "Set playlist dir var...")
     (swap! args! assoc :path (str "./" (str/replace (str/replace (:name data) #"[:/]" "_") fname-regex "") "/"))
@@ -253,6 +257,7 @@
     data))
 
 (defn- download-music-list [m-list]
+  ;; (println m-list)
   (map-indexed
    (fn [i v]
      (do (swap! args! assoc :current (inc i))
@@ -268,18 +273,20 @@
 
 (defn- get-album-list [aid]
   (let [data (get-mlist-info aid m-album)]
+    ;; (println data)
     (->> data
-         :tracks
+         ;; :tracks
+         :songs
          (map #(assoc % :picUrl (data :picUrl)))
          ;; (map handle-song-info)
          download-music-list
          )))
 
 (defn- get-music [sid]
-  (->> (request-url m-info {:id (str sid)})
-      :body
-      :data
-      (#(handle-song-info %))))
+  (->> (request-url m-info {:id (str sid) :ip (ip-generator)})
+       :body
+       :data
+       (#(handle-song-info %))))
 
 (defn- main []
   (let [exec {:sid #(->> (get-music (:sid @args!)))

@@ -7,10 +7,11 @@ api-v1:
   durl: "/url"
 
 api-v2:
-  host: "https://wyapi-eo.toubiec.cn/api"
+  # host: "https://wyapi-eo.toubiec.cn/api"
+  host: "https://nextmusic.toubiec.cn/api"
   info: "/getSongInfo"
-  album: "/album"
-  list: "/getPlaylist"
+  album: "/getAlbum"
+  list: "/playlist_trackall"
   lyric: "/getSongLyric"
   durl: "/getSongUrl"
 
