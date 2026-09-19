@@ -29,7 +29,7 @@
 (def netease-api "https://music.163.com/api")
 (def netease-song-api (str netease-api "/song/detail/?id=%d&ids=[%d]"))
 (def netease-search-api (str netease-api "/search/get/web?csrf_token=hlpretag=&hlposttag=&offset=0&total=true&limit=20&type=%d&s=%s"))
-(def netease-lyric-api (str netease-api "/song/lyric?os=pc&lv=-1&id="))
+(def netease-lyric-api (str netease-api "/song/lyric?os=pc&lv=-1&tv=-1&id="))
 (def args! (atom (cli/parse-opts *command-line-args* {:verbose false}) ))
 
 (def fname-regex #"[:`?*<>\|\"]")
@@ -150,25 +150,45 @@
     ;; (println durl)  ;; get-music-durl
     durl))
 
+(defn- handle-trans-lyric [lrc]
+  (->> lrc
+       (#(str/replace % "[" ""))
+       (str/split-lines)
+       (map #(str/split % #"]"))
+       (reduce (fn [acc [k v]] (update acc (keyword (str k)) (fnil conj []) v)) (sorted-map))
+       (map flatten)
+       ;; 同一行
+       ;; (map #(str "[" (name (first %) ) "]" (str/join " / " (remove nil? (rest %)))))
+       ;; 换行
+       (map #(str "[" (name (first %)) "]" (second %)
+                  (when (= 3 (count (remove nil? %)))
+                    (str "\n" "[" (name (first %)) "]" (last %)))))
+       (str/join "\n")))
+
 (defn- get-lyric [sid]
   (Thread/sleep (+ 1000 (rand-int 1000)))
-  (let [data (:data (:body (request-url m-lyric {:id (str sid) :ip (ip-generator)})))]
+  (let [data (:data (:body (request-url m-lyric {:id (str sid) :ip (ip-generator)})))
+        remove-invalid (fn [lrc]
+                         (->> (clojure.string/split-lines lrc)
+                              (remove #(clojure.string/starts-with? % "{"))
+                              (clojure.string/join "\n")))]
+    ;; (println (:lrc data))
     (if (= (:tlyric data) "")
-      (:lrc data)
+      (remove-invalid (:lrc data))
       (->> data
-           ((fn [x] (str (:lrc x) (:tlyric x))))
-           (#(str/replace % "[" ""))
-           (str/split-lines)
-           (map #(str/split % #"]"))
-           (reduce (fn [acc [k v]] (update acc (keyword (str k)) (fnil conj []) v)) (sorted-map))
-           (map flatten)
-           ;; 同一行
-           ;; (map #(str "[" (name (first %) ) "]" (str/join " / " (remove nil? (rest %)))))
-           ;; 换行
-           (map #(str "[" (name (first %)) "]" (second %)
-                      (when (= 3 (count (remove nil? %)))
-                        (str "\n" "[" (name (first %)) "]" (last %)))))
-           (str/join "\n")))))
+           ((fn [x] (str (remove-invalid (:lrc x))
+                         (remove-invalid (:tlyric x)))))
+           (handle-trans-lyric)))))
+
+(defn- get-lyric-for-163 [sid]
+  (let [data (:body (request-url (str netease-lyric-api sid)))
+        lrc (:lyric (:lrc data))
+        tlrc (:lyric (:tlyric data))]
+    ;; (println lrc )
+    ;; (println tlrc)
+    (if (= tlrc "")
+      lrc
+      (handle-trans-lyric (str lrc tlrc)))))
 
 (defn- file-exists? [path]
   (if (and (not (.exists (io/file (str path ".mp3"))))
@@ -190,7 +210,7 @@
           suffix (check-link durl)
           f-path (str (:path sobj) suffix)
           l-path (str (:path sobj) ".lrc")
-          lyric (get-lyric (:id sobj))
+          lyric (get-lyric-for-163 (:id sobj))
           f-args ["-i" durl
                   "-i" (:picurl sobj)
                   "-c" "copy"
@@ -231,7 +251,7 @@
     ))
 
 (defn- handle-song-info [s-info]
-  ;; (println s-info) ;; handle-song-info
+  ;; (println s-info)
   (let [picurl (if (contains? s-info :picUrl) (:picUrl s-info) (:picimg s-info))
         singer (if (contains? s-info :artists) (:artists s-info) (:singer s-info))
         nm-info (first (:songs (:body (request-url (format netease-song-api (:id s-info) (:id s-info))))))
@@ -257,6 +277,7 @@
               :path (str (:path @args!) (str/replace
                                          (str/replace (str (:name s-info) " - " singer ) "/" "&")
                                          fname-regex ""))}]
+    ;; (println nm-info)
     (download-music sobj)))
 
 (defn- get-mlist-info [id,url]
