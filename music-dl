@@ -33,7 +33,6 @@
 (def args! (atom (cli/parse-opts *command-line-args* {:verbose false}) ))
 
 (def fname-regex #"[:`?*<>\|\"]")
-(defn- ip-generator [] (str/join "." (repeatedly 4 #(inc (rand-int 255)))))
 
 (def usage-doc
   (str"Usage:\n"
@@ -55,6 +54,9 @@
 
 (def client (http/client (assoc-in http/default-client-opts [:ssl-context :insecure] true)))
 
+(defn- log [msg] (println (str "\r\033[K" msg)))
+(defn- ip-generator [] (str/join "." (repeatedly 4 #(inc (rand-int 255)))))
+
 (defn- request-url
   ([url]
    (request-url url nil))
@@ -62,11 +64,29 @@
    ;; (println "------------------------------------------------------------------")
    ;; (println url)
    ;; (println arg)
-   (let [resp (if arg
-               (http/post url {:headers headers :body (json/generate-string arg) :client client})
-               (http/get url {:headers headers}))]
-     ;; (println resp)
-     {:status (:status resp) :body (json/parse-string (:body resp) true)})))
+   (loop [attempt 1]
+     (let [resp (if arg
+                  (http/post url {:headers headers :body (json/generate-string arg) :client client :throw false})
+                  (http/get url {:headers headers :throw false}))]
+       ;; (println resp)
+       (cond
+         (and (>= (:status resp) 200)
+              (< (:status resp) 300))
+         {:status (:status resp) :body (json/parse-string (:body resp) true)}
+
+         (= 404 (:status resp))
+         (if (< attempt 5)
+           (do
+             (log (str "Waiting.... -> 404，等待 5~8 秒后重试... 第" attempt "次重试"))
+             (Thread/sleep (+ 5000 (rand-int 3000)))
+             (recur (inc attempt)))
+           (do
+             (log "Exit....... -> 重试次数已用尽")
+             (println resp)
+             (System/exit 1)))
+         ;; 其他错误直接返回
+         :else
+         resp)))))
      
 (def qargs
   {:qs {:type 1
@@ -94,9 +114,6 @@
 (defn- show-progress []
   (when (and (contains? @args! :current) (contains? @args! :total))
     (render-progress (:current @args!) (:total @args!))))
-
-(defn- log [msg]
-  (println (str "\r\033[K" msg)))
 
 (defn- select-music [qlist]
   (doseq [ql qlist]
@@ -134,6 +151,7 @@
     durl))
 
 (defn- get-lyric [sid]
+  (Thread/sleep (+ 1000 (rand-int 1000)))
   (let [data (:data (:body (request-url m-lyric {:id (str sid) :ip (ip-generator)})))]
     (if (= (:tlyric data) "")
       (:lrc data)
